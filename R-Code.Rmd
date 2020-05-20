@@ -1,0 +1,177 @@
+---
+title: "Project"
+author: "Jiaqi Jiang"
+date: "4/11/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(xts)
+library(rugarch)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+rm(list=ls())	
+data<- read.csv("vixcurrent.csv",header=T)
+data$Date=as.POSIXct(data$Date,format='%m/%d/%Y')
+data=xts(data[,5],data[,1])
+colnames(data)="rate"
+```
+
+
+
+```{r}
+#Differencing the series
+diff.rate=diff(log(data$rate)); diff.rate <- diff.rate[!is.na(diff.rate)]
+#Plot differenced series
+plot(diff.rate,type='l',main='VIX daily log difference', ylab="Difference")
+```
+
+
+```{r}
+#train test split
+num=nrow(diff.rate)
+n_split = num-9
+## Training data
+diff.train=diff.rate[1:n_split,]
+## Test data
+diff.test=diff.rate[n_split:num,]
+```
+
+```{r}
+#GARCH Order Selection
+library(rugarch)
+#Select model with smallest BIC 
+final.bic = Inf
+final.order = c(0,0)
+for (m in 0:3) for (n in 0:3){
+  spec = ugarchspec(variance.model=list(garchOrder=c(m,n)),
+	mean.model=list(armaOrder=c(1, 2), include.mean=T),
+	distribution.model="std")    
+	fit = ugarchfit(spec, diff.train, solver = 'hybrid')
+       current.bic = infocriteria(fit)[2] 
+	if (current.bic < final.bic){ 
+	 final.bic = current.bic
+        final.order = c(m, n)
+	}}
+final.order
+```
+
+```{r}
+#Refine the ARMA order
+final.bic = Inf
+final.order.arma = c(0,0)
+for (p in 0:6) for (q in 0:6){
+  spec = ugarchspec(variance.model=list(garchOrder=c(1,1)),
+	mean.model=list(armaOrder=c(p, q), include.mean=T),
+	distribution.model="std")    
+	fit = ugarchfit(spec, diff.train, solver = 'hybrid')
+	current.bic = infocriteria(fit)[2] 
+	if (current.bic < final.bic){ 
+	   final.bic = current.bic
+	   final.order.arma = c(p, q)
+	}
+} 
+final.order.arma
+```
+
+```{r}
+#Final GARCH Order Selection
+library(rugarch)
+#Select model with smallest BIC 
+final.bic = Inf
+final.order = c(0,0)
+for (m in 0:3) for (n in 0:3){
+  spec = ugarchspec(variance.model=list(garchOrder=c(m,n)),
+	mean.model=list(armaOrder=c(2, 2), include.mean=T),
+	distribution.model="std")    
+	fit = ugarchfit(spec, diff.train, solver = 'hybrid')
+       current.bic = infocriteria(fit)[2] 
+	if (current.bic < final.bic){ 
+	 final.bic = current.bic
+        final.order = c(m, n)
+	}}
+final.order
+```
+
+
+```{r}
+spec.1 = ugarchspec(variance.model=list(garchOrder=c(1,1)),
+mean.model=list(armaOrder=c(1,2), include.mean=T), distribution.model="std")
+final.model.1 = ugarchfit(spec.1, diff.train, solver = 'hybrid')
+infocriteria(final.model.1)
+```
+
+```{r}
+spec.2 = ugarchspec(variance.model=list(garchOrder=c(1,1)),
+mean.model=list(armaOrder=c(2,2), include.mean=T), distribution.model="std")
+final.model.2 = ugarchfit(spec.2, diff.train, solver = 'hybrid')
+infocriteria(final.model.2)
+```
+
+
+
+```{r}
+#Prediction of the return time series and the volatility sigma
+nfore = length(diff.test)
+fore.series.1 = NULL
+fore.sigma.1 = NULL
+for(f in 1: nfore){	
+  diff = diff.train
+  if(f>2){
+    diff = c(diff.train,diff.test[1:(f-1)])}
+  final.model.1 = ugarchfit(spec.1, diff, solver = 'hybrid')    
+	fore = ugarchforecast(final.model.1, n.ahead=1)
+	fore.series.1 = c(fore.series.1, fore@forecast$seriesFor)
+	fore.sigma.1 = c(fore.sigma.1, fore@forecast$sigmaFor)
+}
+```
+  
+
+```{r}
+#MSPE
+mean((fore.series.1-diff.test))^2
+#mean absolute prediction error (MAE)
+mean(abs(fore.series.1-diff.test))
+#Mean absolute percentage error (MAPE)
+mean(abs(fore.series.1-diff.test)/(diff.test+0.000001))
+# Precision Measure (PM)
+sum((fore.series.1-diff.test)^2)/sum((diff.test-mean(diff.test))^2)
+```
+
+
+```{r}
+#Mean Prediction Comparison Plots
+n=length(diff.rate)
+diff.plot = diff.test
+names(diff.plot)="Fore"
+diff.plot$Fore=fore.series.1
+points(diff.plot,lwd= 2, col="blue") 
+```
+
+
+
+
+```{r}
+#Compare squared observed time series with variance forecasts
+ymin = min(c(as.vector(diff.test^2),fore.sigma.1^2))
+ymax = max(c(as.vector(diff.test^2),fore.sigma.1^2))
+plot(diff.test^2,type="l", ylim=c(ymin,ymax), xlab=" ", ylab="USD/EUR Exchange Rate")
+diff.plot$Fore=fore.sigma.1^2
+points(diff.plot,lwd= 2, col="blue")
+
+```
+
+
+
+```{r}
+fore.series.1
+```
+This will be output to Python for plot purposes
